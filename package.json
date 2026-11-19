@@ -1,0 +1,28 @@
+{
+  "name": "maze-brawl",
+  "version": "1.0.0",
+  "description": "Cross-platform multiplayer top-down shooter with an authoritative Node.js server.",
+  "type": "module",
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "node --watch server/index.js",
+    "test": "node --test \"tests/**/*.test.js\"",
+    "build:static": "node scripts/build-static.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "keywords": [
+    "game",
+    "multiplayer",
+    "socket.io",
+    "html5-canvas"
+  ],
+  "author": "M. Najam-ul-Hassan",
+  "license": "MIT",
+  "dependencies": {
+    "express": "^4.22.3",
+    "socket.io": "^4.8.4"
+  }
+}

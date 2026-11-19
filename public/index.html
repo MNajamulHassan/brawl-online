@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+  <meta name="description" content="Maze Brawl: a cross-platform multiplayer top-down shooter for phone and PC.">
+  <meta name="theme-color" content="#0b100d">
+  <meta name="game-server" content="">
+  <title>Maze Brawl</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='14' fill='%23c6f432'/%3E%3Crect x='16' y='14' width='14' height='5' fill='%23111'/%3E%3C/svg%3E">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Russo+One&family=Rubik:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body class="lobby-open">
+<canvas id="cv"></canvas>
+
+<div id="hud" hidden>
+  <div class="top">
+    <button id="bLeave" type="button">Leave</button>
+    <div id="score"></div>
+    <div id="timer">5:00</div>
+    <button id="bBoard" type="button">Scores</button>
+  </div>
+  <div id="matchInfo"></div>
+  <div id="feed"></div>
+  <div id="hitmark"></div>
+  <div class="hpw"><div id="hpb"><i></i></div><span id="hpt">100</span></div>
+  <div id="wpn"><b id="wn">Pistol</b><span id="wa">∞</span><button id="bSwap" type="button" hidden>Swap (Q)</button><span id="ping"></span></div>
+  <div id="help">WASD move · mouse aim · click shoot · Q swap · Tab scores</div>
+  <div id="dead" hidden></div>
+  <div id="board" hidden><h2 id="bh">Scores</h2><table id="bt"></table><p class="hint" id="bhint"></p></div>
+</div>
+
+<div id="lobby">
+  <aside class="rail" aria-label="Lobby navigation">
+    <div class="rail-brand" aria-label="Maze Brawl">MB</div>
+    <nav>
+      <button class="rail-item active" type="button" data-jump="command" aria-label="Play">
+        <span class="rail-symbol">HQ</span><span>Play</span>
+      </button>
+      <button class="rail-item" type="button" data-jump="fighter" aria-label="Fighter">
+        <span class="rail-symbol">ID</span><span>Fighter</span>
+      </button>
+      <button class="rail-item" type="button" data-jump="matches" aria-label="Matches">
+        <span class="rail-symbol">VS</span><span>Matches</span>
+      </button>
+      <button class="rail-item" type="button" data-jump="create" aria-label="Create match">
+        <span class="rail-symbol">+</span><span>Create</span>
+      </button>
+    </nav>
+    <button class="rail-item rail-settings" type="button" data-jump="fighter" aria-label="Settings">
+      <span class="rail-symbol">••</span><span>Settings</span>
+    </button>
+  </aside>
+
+  <main class="lobby-main">
+    <header class="lobby-header">
+      <div class="wordmark">
+        <span class="wordmark-kicker">Enter the arena</span>
+        <h1>Maze <em>Brawl</em></h1>
+      </div>
+      <div class="header-status">
+        <span class="live-dot" aria-hidden="true"></span>
+        <span id="net" class="net">Connecting…</span>
+      </div>
+    </header>
+
+    <div class="lobby-grid">
+      <div class="command-column">
+        <section class="command-card" id="command" aria-labelledby="hPlay">
+          <div class="card-kicker">Matchmaking</div>
+          <h2 id="hPlay">Choose your fight</h2>
+          <p class="command-copy">Drop into a live arena, outplay the room, and reach the score limit first.</p>
+
+          <div class="section-label"><span>01</span> Select mode</div>
+          <div class="seg mode-select" id="sMode"></div>
+          <p id="modeDesc" class="mode-desc"></p>
+
+          <button id="bQuick" class="big quick-play" type="button">
+            <span>Quick play</span>
+            <small>Find the best available match</small>
+          </button>
+
+          <div class="quick-actions">
+            <button id="bPrac" class="ghost" type="button">Practice vs bots</button>
+            <form id="fJoin" class="join-form">
+              <input id="jcode" placeholder="MATCH CODE" maxlength="5" autocomplete="off" autocapitalize="off" aria-label="Match code">
+              <button type="submit">Join</button>
+            </form>
+          </div>
+          <p class="err" id="err" role="alert"></p>
+        </section>
+
+        <section class="glass-card create-panel" id="create" aria-labelledby="hCreate">
+          <div class="panel-heading">
+            <div><span class="card-kicker">Private lobby</span><h3 id="hCreate">Create a match</h3></div>
+            <span class="panel-number">02</span>
+          </div>
+          <div class="create-grid">
+            <div><div class="lbl">Arena</div><div class="seg" id="sMap"></div></div>
+            <div><div class="lbl">Access</div><div class="seg" id="sVis"></div></div>
+          </div>
+          <div class="create-footer">
+            <label class="toggle"><input type="checkbox" id="cBots"><span>Fill empty slots with bots</span></label>
+            <button id="bCreate" class="create-button" type="button">Launch lobby</button>
+          </div>
+        </section>
+
+        <section class="glass-card matches-panel" id="matches" aria-labelledby="hMatches">
+          <div class="panel-heading">
+            <div><span class="card-kicker">Live now</span><h3 id="hMatches">Public matches</h3></div>
+            <span class="pulse-label">Auto refresh</span>
+          </div>
+          <div id="list" class="list"><div class="empty">Looking for matches…</div></div>
+        </section>
+      </div>
+
+      <aside class="fighter-card" id="fighter" aria-labelledby="hFighter">
+        <div class="panel-heading">
+          <div><span class="card-kicker">Combatant</span><h2 id="hFighter">Your fighter</h2></div>
+          <span class="level-tag">Ready</span>
+        </div>
+        <div class="fighter-preview">
+          <div class="preview-ring"></div>
+          <canvas id="pv" width="300" height="300" aria-hidden="true"></canvas>
+          <span class="preview-label">Loadout preview</span>
+        </div>
+        <label class="field-label">Callsign<input id="nm" maxlength="14" autocomplete="off"></label>
+        <div class="lbl">Suit colour</div><div id="swatch" class="sw"></div>
+        <div class="lbl">Headgear</div><div id="hats" class="seg hats"></div>
+        <div class="controls-card">
+          <span class="card-kicker">Field controls</span>
+          <div><kbd>WASD</kbd><span>Move</span><kbd>Mouse</kbd><span>Aim</span></div>
+          <div><kbd>Click</kbd><span>Fire</span><kbd>Q</kbd><span>Swap</span></div>
+        </div>
+      </aside>
+    </div>
+  </main>
+</div>
+<div id="toast" role="status"></div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script type="module" src="/js/main.js"></script>
+</body>
+</html>

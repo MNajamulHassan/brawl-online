@@ -1,0 +1,9 @@
+# Netlify hosts the static client only; the game server runs on Render.
+# GAME_SERVER_URL below can be overridden in Netlify → Environment variables.
+[build]
+  command = "npm run build:static"
+  publish = "dist"
+
+[build.environment]
+  NODE_VERSION = "20"
+  GAME_SERVER_URL = "https://brawl-online-mb.onrender.com"

@@ -1,0 +1,16 @@
+# Render Blueprint: https://render.com/docs/blueprint-spec
+services:
+  - type: web
+    name: brawl-online-mb
+    runtime: node
+    plan: free
+    buildCommand: npm ci --omit=dev
+    startCommand: npm start
+    healthCheckPath: /healthz
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: LOG_LEVEL
+        value: info
+      - key: CORS_ORIGIN # Netlify sites that serve the client (comma-separated)
+        value: https://stellular-kashata-29a5cb.netlify.app,https://brawl-online-mb.netlify.app
