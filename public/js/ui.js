@@ -1,4 +1,5 @@
 import { COLORS, HATS, MODES, MAPS, WEAPONS, TEAM_COLORS, TEAM_NAMES } from '/shared/constants.js';
+import { SKILLS } from '/shared/balance.js';
 import { drawCharacter } from './renderer.js';
 
 /** DOM for the lobby and the in-game HUD. No game rules live here. */
@@ -19,6 +20,43 @@ export const profile = store.get('profile', null) || {
 export const options = store.get('options', { mode: 'dm', map: 'field', visibility: 'public', bots: true });
 const saveProfile = () => store.set('profile', profile);
 const saveOptions = () => store.set('options', options);
+
+/* --------------------------------------------------------------- modals */
+// Open dialogs, newest last. Esc / the menu key closes the top one.
+const modals = [];
+export function openModal(el) {
+  el.hidden = false;
+  if (!modals.includes(el)) modals.push(el);
+  el.querySelector('button, [href], input')?.focus({ preventScroll: true });
+}
+export function closeModal(el) {
+  el.hidden = true;
+  const i = modals.indexOf(el);
+  if (i >= 0) modals.splice(i, 1);
+  el.dispatchEvent(new Event('closed'));
+}
+export function closeTopModal() {
+  const el = modals.at(-1);
+  if (!el) return false;
+  closeModal(el);
+  return true;
+}
+export const anyModalOpen = () => modals.length > 0;
+
+/** Yes/no dialog. Resolves true for OK, false for Cancel / Esc. */
+export function confirmDialog(text, ok = 'OK', cancel = 'Cancel') {
+  const el = $('#confirm');
+  $('#cfText').textContent = text;
+  $('#cfOk').textContent = ok;
+  $('#cfCancel').textContent = cancel;
+  return new Promise((resolve) => {
+    let answer = false;
+    $('#cfOk').onclick = () => { answer = true; closeModal(el); };
+    $('#cfCancel').onclick = () => closeModal(el);
+    el.addEventListener('closed', () => resolve(answer), { once: true });
+    openModal(el);
+  });
+}
 
 let toastTimer = 0;
 export function toast(text) {
@@ -43,7 +81,8 @@ function segmented(el, items, current, onPick) {
 export function initLobby(handlers) {
   const modeDescriptions = {
     dm: 'Every fighter for themselves. First to 15 eliminations wins.',
-    tdm: 'Red versus Blue. Coordinate with your squad to reach 30 first.',
+    tdm: 'Red versus Blue. Friends who join with your code are on your team. Revive downed teammates. First to 30.',
+    waves: 'Co-op: team up against ever-tougher waves of bots. Revive each other; the run ends when everyone is down.',
   };
   const updateModeDescription = () => { $('#modeDesc').textContent = modeDescriptions[options.mode] || ''; };
 
@@ -75,6 +114,7 @@ export function initLobby(handlers) {
     options.mode = v; saveOptions(); updateModeDescription();
   });
   updateModeDescription();
+  showBestWaves();
   segmented($('#sMap'), Object.entries(MAPS), options.map, (v) => { options.map = v; saveOptions(); });
   segmented($('#sVis'), [['public', 'Public'], ['private', 'Private']], options.visibility, (v) => { options.visibility = v; saveOptions(); });
   const cb = $('#cBots');
@@ -96,6 +136,18 @@ export function initLobby(handlers) {
       drawCharacter(pv, 50, 50, t / 900, profile.color, profile.hat, 'ar');
     },
   };
+}
+
+/** Best Bot waves score, kept in this browser. */
+export function recordWaves(n) {
+  if (n > store.get('bestWaves', 0)) store.set('bestWaves', n);
+  showBestWaves();
+}
+function showBestWaves() {
+  const best = store.get('bestWaves', 0);
+  const el = $('#bestWaves');
+  el.hidden = !best;
+  el.textContent = `Your best in Bot waves: ${best} wave${best === 1 ? '' : 's'} survived`;
 }
 
 export function setNetStatus(text, online) {
@@ -133,6 +185,46 @@ export function pruneFeed() {
 export function clearFeed() { feed.length = 0; renderFeed(); }
 function renderFeed() { $('#feed').innerHTML = feed.map((f) => `<div>${esc(f.text)}</div>`).join(''); }
 
+let killTimer = 0;
+export function killConfirm(text) {
+  const el = $('#killcf');
+  el.textContent = text;
+  el.classList.add('on');
+  clearTimeout(killTimer);
+  killTimer = setTimeout(() => el.classList.remove('on'), 900);
+}
+let hurtTimer = 0;
+export function hurtFlash() {
+  const el = $('#flash');
+  el.classList.add('on');
+  clearTimeout(hurtTimer);
+  hurtTimer = setTimeout(() => el.classList.remove('on'), 60);
+}
+
+/** Skill draft cards. `onPick(1..3)` fires on click or tap. */
+let draftKey = '';
+export function initDraft(onPick) {
+  $('#draft').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-pick]');
+    if (b) onPick(Number(b.dataset.pick));
+  });
+}
+function renderDraft(priv) {
+  const el = $('#draft');
+  const offer = priv && priv.of;
+  if (!offer) { el.hidden = true; draftKey = ''; return; }
+  el.hidden = false;
+  const key = offer.join();
+  if (key !== draftKey) {
+    draftKey = key;
+    el.innerHTML = `<h3>Level ${priv.lv} · pick a skill<small id="draftT"></small></h3><div class="cards">${offer.map((id, i) => {
+      const s = SKILLS[id], have = (priv.sk && priv.sk[id]) || 0;
+      return `<button type="button" data-pick="${i + 1}" data-type="${s.type}"><kbd>${i + 1}</kbd><b>${esc(s.name)}${have ? ` ${have + 1}` : ''}</b><small>${esc(s.desc)}</small><small>${s.type === 'active' ? 'Active · E' : s.type === 'mod' ? 'Weapon mod' : 'Passive'}</small></button>`;
+    }).join('')}</div>`;
+  }
+  $('#draftT').textContent = `auto in ${Math.ceil(priv.ot / 1000)}s`;
+}
+
 let hitTimer = 0;
 export function flashHitmarker() {
   const el = $('#hitmark');
@@ -148,28 +240,59 @@ export function setMatchInfo(m) {
 }
 
 /** Refresh every HUD element from the latest snapshot. */
-export function updateHud({ snap, me, meId, match, showBoard, ping }) {
+export function updateHud({ snap, me, meId, match, showBoard, ping, priv }) {
   const teams = MODES[match.mode].teams;
+  const coop = !!MODES[match.mode].coop;
   const r = snap.round;
+  $('#timer').hidden = coop;
   $('#timer').textContent = r.s === 'ended' ? '0:00' : `${Math.floor(r.tl / 60)}:${String(r.tl % 60).padStart(2, '0')}`;
 
-  if (teams) $('#score').innerHTML = `<span class="r">Red ${snap.ts[0]}</span> · <span class="b">Blue ${snap.ts[1]}</span>`;
+  const wave = $('#wave');
+  wave.hidden = !snap.wv;
+  if (snap.wv) wave.textContent = snap.wv.s === 'break' ? `Wave ${snap.wv.n + 1} in ${snap.wv.nx}s` : `Wave ${snap.wv.n} · ${snap.wv.left} bots left`;
+
+  if (coop) $('#score').textContent = `Kills ${me ? me.k : 0}`;
+  else if (teams) $('#score').innerHTML = `<span class="r">Red ${snap.ts[0]}</span> · <span class="b">Blue ${snap.ts[1]}</span>`;
   else {
     const top = snap.pl.reduce((m, p) => Math.max(m, p.k), 0);
     $('#score').textContent = `You ${me ? me.k : 0} · Top ${top} / ${MODES[match.mode].scoreLimit}`;
   }
 
+  renderDraft(priv);
+  if (priv) {
+    $('#lvl').textContent = `Lv ${priv.lv}`;
+    $('#xpb i').style.width = priv.xn ? `${Math.min(100, (priv.xp / priv.xn) * 100)}%` : '100%';
+    $('#skills').innerHTML = Object.entries(priv.sk || {}).map(([id, n]) => `<span>${esc(SKILLS[id]?.name || id)}${n > 1 ? ` ×${n}` : ''}</span>`).join('');
+    const ab = $('#bAbility');
+    ab.hidden = !priv.ac;
+    if (priv.ac) {
+      ab.classList.toggle('cd', priv.acd > 0);
+      ab.textContent = `${SKILLS[priv.ac].name} ${priv.acd > 0 ? Math.ceil(priv.acd / 1000) + 's' : '(E)'}`;
+    }
+  }
+
+  const mates = teams && me ? snap.pl.filter((p) => p.t === me.t && p.i !== meId) : [];
+  $('#mates').innerHTML = mates.map((p) => `<div><span class="${p.dn ? 'down' : ''}">${esc(p.n)}${p.dn ? ' · down' : p.al ? '' : ' · out'}</span><i><b style="width:${p.al && !p.dn ? Math.round((100 * p.hp) / (p.mh || 100)) : 0}%"></b></i></div>`).join('');
+
   if (me) {
+    const mh = me.mh || 100;
     const bar = $('#hpb i');
-    bar.style.width = `${Math.max(0, me.hp)}%`;
-    bar.style.background = me.hp > 50 ? 'var(--lime)' : me.hp > 25 ? '#ffc23a' : 'var(--red)';
-    $('#hpt').textContent = Math.max(0, me.hp);
+    bar.style.width = `${Math.max(0, (100 * me.hp) / mh)}%`;
+    bar.style.background = me.hp > mh / 2 ? 'var(--lime)' : me.hp > mh / 4 ? '#ffc23a' : 'var(--red)';
+    $('#arb i').style.width = `${Math.min(100, me.ar || 0)}%`;
+    $('#hpt').textContent = Math.max(0, me.hp) + (me.ar ? ` +${me.ar}` : '');
     $('#wn').textContent = WEAPONS[me.w]?.name || 'Pistol';
     $('#wa').textContent = me.w === 'pistol' ? (me.sp ? `∞ · ${WEAPONS[me.sp].name} ${me.am}` : '∞') : `${me.am} left`;
     $('#bSwap').hidden = !me.sp;
 
     const dead = $('#dead');
-    if (!me.al && r.s === 'playing') {
+    if (me.dn && r.s === 'playing') {
+      dead.hidden = false;
+      dead.innerHTML = `You're down<small>${me.rv ? `Being revived… ${me.rv}%` : `A teammate can revive you · ${Math.ceil(me.dl / 1000)}s`}</small>`;
+    } else if (!me.al && coop && r.s === 'playing') {
+      dead.hidden = false;
+      dead.innerHTML = 'Eliminated<small>You return when the next wave starts.</small>';
+    } else if (!me.al && r.s === 'playing') {
       const killer = snap.pl.find((p) => p.i === me.lk);
       const by = me.lk === meId ? 'You blew yourself up' : `Eliminated by ${esc(killer ? killer.n : 'someone')}`;
       dead.hidden = false;
@@ -183,9 +306,9 @@ export function updateHud({ snap, me, meId, match, showBoard, ping }) {
   board.hidden = !visible;
   if (!visible) return;
   const rows = [...snap.pl].sort((a, b) => b.k - a.k || a.d - b.d);
-  $('#bh').textContent = r.s === 'ended' ? `Round over · ${r.w === 'Draw' ? 'draw' : `${r.w} wins`}` : 'Scores';
+  $('#bh').textContent = r.s === 'ended' ? (coop ? `Run over · ${r.w}` : `Round over · ${r.w === 'Draw' ? 'draw' : `${r.w} wins`}`) : 'Scores';
   $('#bt').innerHTML = '<tr><th>Player</th><th>Kills</th><th>Deaths</th></tr>' + rows.map((p) =>
-    `<tr class="${p.i === meId ? 'me' : ''}"><td><span class="dot" data-c="${esc(teams ? TEAM_COLORS[p.t] : p.c)}"></span>${esc(p.n)}${teams ? ` <small>(${TEAM_NAMES[p.t]})</small>` : ''}</td><td>${p.k}</td><td>${p.d}</td></tr>`).join('');
+    `<tr class="${p.i === meId ? 'me' : ''}"><td><span class="dot" data-c="${esc(teams ? TEAM_COLORS[p.t] : p.c)}"></span>${esc(p.n)}${teams && !coop ? ` <small>(${TEAM_NAMES[p.t]})</small>` : ''}</td><td>${p.k}</td><td>${p.d}</td></tr>`).join('');
   for (const d of board.querySelectorAll('.dot')) d.style.background = d.dataset.c;
   $('#bhint').textContent = r.s === 'ended' ? `Next round in ${r.tl}s.` : match.practice ? 'Practice match against bots.' : `Share code ${match.code} so friends can join.`;
 }

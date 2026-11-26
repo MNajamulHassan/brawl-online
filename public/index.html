@@ -22,13 +22,24 @@
     <div id="score"></div>
     <div id="timer">5:00</div>
     <button id="bBoard" type="button">Scores</button>
+    <button id="bGear" class="gear" type="button" aria-label="Settings">⚙</button>
   </div>
   <div id="matchInfo"></div>
   <div id="feed"></div>
   <div id="hitmark"></div>
-  <div class="hpw"><div id="hpb"><i></i></div><span id="hpt">100</span></div>
+  <div id="flash"></div>
+  <div id="killcf"></div>
+  <div id="wave" hidden></div>
+  <div id="mates"></div>
+  <div id="xp"><span id="lvl">Lv 1</span><div id="xpb"><i></i></div></div>
+  <div class="hpw"><div id="hpb"><i></i><div id="arb"><i></i></div></div><span id="hpt">100</span></div>
+  <div id="skills"></div>
+  <div id="draft" hidden></div>
+  <button id="bAbility" type="button" hidden>E</button>
+  <button id="bFire" type="button" hidden>Fire</button>
+  <span id="fps" hidden></span>
   <div id="wpn"><b id="wn">Pistol</b><span id="wa">∞</span><button id="bSwap" type="button" hidden>Swap (Q)</button><span id="ping"></span></div>
-  <div id="help">WASD move · mouse aim · click shoot · Q swap · Tab scores</div>
+  <div id="help">WASD move · mouse aim · click shoot · Q swap · E skill · 1/2/3 pick · Tab scores · M mute</div>
   <div id="dead" hidden></div>
   <div id="board" hidden><h2 id="bh">Scores</h2><table id="bt"></table><p class="hint" id="bhint"></p></div>
 </div>
@@ -50,8 +61,8 @@
         <span class="rail-symbol">+</span><span>Create</span>
       </button>
     </nav>
-    <button class="rail-item rail-settings" type="button" data-jump="fighter" aria-label="Settings">
-      <span class="rail-symbol">••</span><span>Settings</span>
+    <button id="rSettings" class="rail-item rail-settings" type="button" aria-label="Settings">
+      <span class="rail-symbol">⚙</span><span>Settings</span>
     </button>
   </aside>
 
@@ -77,6 +88,7 @@
           <div class="section-label"><span>01</span> Select mode</div>
           <div class="seg mode-select" id="sMode"></div>
           <p id="modeDesc" class="mode-desc"></p>
+          <p id="bestWaves" class="best" hidden></p>
 
           <button id="bQuick" class="big quick-play" type="button">
             <span>Quick play</span>
@@ -91,6 +103,11 @@
             </form>
           </div>
           <p class="err" id="err" role="alert"></p>
+          <div class="lobby-links">
+            <button id="bTutorial" class="ghost" type="button">Tutorial</button>
+            <button id="bHowTo" class="ghost" type="button">How to play</button>
+            <button id="bAbout" class="ghost" type="button">About</button>
+          </div>
         </section>
 
         <section class="glass-card create-panel" id="create" aria-labelledby="hCreate">
@@ -132,14 +149,83 @@
         <div class="lbl">Headgear</div><div id="hats" class="seg hats"></div>
         <div class="controls-card">
           <span class="card-kicker">Field controls</span>
-          <div><kbd>WASD</kbd><span>Move</span><kbd>Mouse</kbd><span>Aim</span></div>
-          <div><kbd>Click</kbd><span>Fire</span><kbd>Q</kbd><span>Swap</span></div>
+          <div id="controlsKeys"></div>
         </div>
       </aside>
     </div>
   </main>
 </div>
 <div id="toast" role="status"></div>
+
+<div id="tut" hidden>
+  <div class="tut-card">
+    <div class="tut-head"><b>Tutorial</b><button id="tSkip" type="button" class="ghost">Skip</button></div>
+    <ol class="tut-steps"></ol>
+    <p class="tut-tip"></p>
+    <div class="tut-end" hidden><button id="tQuick" type="button">Quick play</button><button id="tLobby" type="button" class="ghost">Back to lobby</button></div>
+  </div>
+  <div class="tut-board" hidden><h2>Scores</h2><p>In a match this lists every player's kills and deaths.</p></div>
+  <button id="tSwap" type="button" hidden>Swap</button>
+  <button id="tBoard" type="button" hidden>Scores</button>
+  <button id="tGear" class="gear" type="button" aria-label="Settings">⚙</button>
+</div>
+
+<div id="loading" class="screen">
+  <div class="load-card">
+    <h1>Maze <em>Brawl</em></h1>
+    <div class="spinner" aria-hidden="true"></div>
+    <p id="loadMsg">Connecting to the game server…</p>
+    <button id="loadRetry" type="button" hidden>Retry</button>
+    <button id="loadTutorial" type="button" class="ghost" hidden>Play the tutorial offline</button>
+  </div>
+</div>
+
+<div id="settings" class="modal" hidden role="dialog" aria-modal="true" aria-labelledby="setTitle">
+  <div class="sheet">
+    <header><h2 id="setTitle">Settings</h2><button id="setClose" type="button">Close</button></header>
+    <nav id="setTabs" class="set-tabs" role="tablist"></nav>
+    <div id="setBody" class="sheet-body"></div>
+    <footer><button id="setReset" type="button" class="ghost">Reset to defaults</button></footer>
+  </div>
+</div>
+
+<div id="howto" class="modal" hidden role="dialog" aria-modal="true" aria-labelledby="howTitle">
+  <div class="sheet">
+    <header><h2 id="howTitle">How to play</h2><button class="close" type="button">Close</button></header>
+    <div id="howBody" class="sheet-body"></div>
+  </div>
+</div>
+
+<div id="about" class="modal" hidden role="dialog" aria-modal="true" aria-labelledby="aboutTitle">
+  <div class="sheet small">
+    <header><h2 id="aboutTitle">About</h2><button class="close" type="button">Close</button></header>
+    <div id="aboutBody" class="sheet-body"></div>
+  </div>
+</div>
+
+<div id="welcome" class="modal" hidden role="dialog" aria-modal="true" aria-labelledby="welTitle">
+  <div class="sheet small">
+    <h2 id="welTitle">New here?</h2>
+    <p>Take the 1-minute tutorial to learn moving, shooting, weapons and grenades.</p>
+    <div class="row"><button id="welStart" type="button">Start tutorial</button><button id="welSkip" type="button" class="ghost">Skip</button></div>
+  </div>
+</div>
+
+<div id="confirm" class="modal" hidden role="alertdialog" aria-modal="true" aria-labelledby="cfText">
+  <div class="sheet small">
+    <p id="cfText"></p>
+    <div class="row"><button id="cfOk" type="button">OK</button><button id="cfCancel" type="button" class="ghost">Cancel</button></div>
+  </div>
+</div>
+
+<div id="layoutEdit" class="screen" hidden>
+  <div id="leItems"></div>
+  <div class="le-bar">
+    <span>Drag to move · select then resize</span>
+    <button id="leSmaller" type="button">Smaller</button><button id="leBigger" type="button">Bigger</button>
+    <button id="leReset" type="button" class="ghost">Reset</button><button id="leDone" type="button">Done</button>
+  </div>
+</div>
 
 <script src="/socket.io/socket.io.js"></script>
 <script type="module" src="/js/main.js"></script>

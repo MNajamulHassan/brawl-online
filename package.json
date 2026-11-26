@@ -1,6 +1,6 @@
 {
   "name": "maze-brawl",
-  "version": "1.0.0",
+  "version": "1.2.0",
   "description": "Cross-platform multiplayer top-down shooter with an authoritative Node.js server.",
   "type": "module",
   "main": "server/index.js",

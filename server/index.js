@@ -8,6 +8,8 @@ import { createLogger } from './logger.js';
 import { RoomManager } from './game/RoomManager.js';
 import { registerSocketHandlers } from './net/socketHandlers.js';
 import { TICK_RATE, SNAPSHOT_RATE } from '../shared/constants.js';
+import * as BALANCE from '../shared/balance.js';
+import { isAdmin } from './adminAuth.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const logger = createLogger(config.logLevel);
@@ -32,6 +34,13 @@ app.get('/healthz', (_req, res) => {
   res.json({ status: 'ok', uptimeSec: Math.round((Date.now() - startedAt) / 1000), ...manager.stats() });
 });
 app.get('/api/matches', (_req, res) => res.json({ matches: manager.listPublic() }));
+// Admin-only live balance data. Disabled (404) unless ADMIN_TOKEN is set.
+app.get('/api/balance', (req, res) => {
+  if (!config.adminToken) return res.status(404).json({ error: 'Not found' });
+  if (!isAdmin(req.get('authorization'), config.adminToken)) return res.status(401).json({ error: 'Unauthorized' });
+  res.setHeader('Cache-Control', 'no-store');
+  res.json({ stats: manager.balance.summary(), config: BALANCE });
+});
 app.use((_req, res) => res.status(404).json({ error: 'Not found' }));
 
 const server = http.createServer(app);
@@ -81,12 +90,16 @@ function sendSnapshots() {
     const snap = room.buildSnapshot();
     for (const p of room.players.values()) {
       if (p.isBot) continue;
-      io.to(p.id).volatile.emit('state', { ...snap, ack: p.lastSeq });
+      io.to(p.id).volatile.emit('state', { ...snap, ack: p.lastSeq, me: room.privateState(p.id) });
     }
   }
 }
 
 const lobbyTimer = setInterval(() => handlers.broadcastLobby(true), 3000);
+// Balance stats live in memory; log them every 5 minutes so the history survives restarts.
+const balanceTimer = setInterval(() => {
+  if (manager.balance.rounds) logger.info('balance.stats', manager.balance.summary());
+}, 5 * 60 * 1000);
 
 /* ---------------------------------------------------------- Startup */
 server.listen(config.port, config.host, () => {
@@ -97,6 +110,7 @@ function shutdown(signal) {
   logger.info('server.stopping', { signal });
   clearInterval(loop);
   clearInterval(lobbyTimer);
+  clearInterval(balanceTimer);
   io.close();
   server.close(() => process.exit(0));
   setTimeout(() => process.exit(0), 5000).unref();

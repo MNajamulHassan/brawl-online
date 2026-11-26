@@ -1,5 +1,6 @@
 import { ROOM_CODE_ALPHABET, ROOM_CODE_LENGTH } from '../../shared/constants.js';
 import { Room } from './Room.js';
+import { BalanceStats } from './BalanceStats.js';
 
 export const ERRORS = {
   ROOM_NOT_FOUND: 'No match found with that code.',
@@ -21,6 +22,7 @@ export class RoomManager {
     this.logger = logger;
     this.rooms = new Map();
     this.playerRoom = new Map();
+    this.balance = new BalanceStats(); // shared by every room
   }
 
   generateCode() {
@@ -41,7 +43,11 @@ export class RoomManager {
       bots: practice || bots,
       minPlayers: practice ? 6 : 4,
       rng: this.rng, now: this.now,
-      onEvent: (type, payload) => this.onRoomEvent(code, type, payload),
+      stats: this.balance,
+      onEvent: (type, payload) => {
+        if (type === 'roundEnd') this.logger?.info('round.ended', { code, mode, winner: payload.winner, waves: payload.waves });
+        this.onRoomEvent(code, type, payload);
+      },
     });
     room.practice = practice;
     this.rooms.set(code, room);
@@ -54,7 +60,8 @@ export class RoomManager {
     const room = this.rooms.get(code);
     if (!room || room.practice) return { error: ERRORS.ROOM_NOT_FOUND };
     if (room.isFull) return { error: ERRORS.ROOM_FULL };
-    return this.place(room, playerId, profile);
+    // Joining by code = joining friends: in team deathmatch you land on the host's team.
+    return this.place(room, playerId, profile, { team: room.partyTeam() });
   }
 
   /** Join the fullest public match with space, or open a new public match with bots. */
@@ -80,8 +87,8 @@ export class RoomManager {
     return this.place(created.room, playerId, profile);
   }
 
-  place(room, playerId, profile) {
-    const player = room.addHuman(playerId, profile);
+  place(room, playerId, profile, opts) {
+    const player = room.addHuman(playerId, profile, opts);
     if (!player) return { error: ERRORS.ROOM_FULL };
     this.playerRoom.set(playerId, room.code);
     return { room, player };

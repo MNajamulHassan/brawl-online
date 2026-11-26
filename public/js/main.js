@@ -1,13 +1,21 @@
 /* global io */
-import { INPUT_DT, PLAYER_SPEED, PLAYER_RADIUS, TILE, MAP_W, MAP_H } from '/shared/constants.js';
+import { INPUT_DT, PLAYER_SPEED, PLAYER_RADIUS, TILE, MAP_W, MAP_H, TEAM_COLORS } from '/shared/constants.js';
 import { buildMap } from '/shared/maps.js';
 import { moveEntity, isSolidPoint } from '/shared/physics.js';
 import { Input } from './input.js';
 import { renderMapImage, drawFrame } from './renderer.js';
 import {
+  sfx, setVolumes, setShakeEnabled, startMusic, stopMusic, shake, shakeOffset, floaters, addFloater, updateFloaters,
+} from './fx.js';
+import {
   profile, initLobby, setNetStatus, setLobbyError, renderMatchList, showLobby, toast,
   addFeed, pruneFeed, clearFeed, flashHitmarker, setMatchInfo, updateHud,
+  initDraft, killConfirm, hurtFlash, recordWaves, openModal, closeModal, closeTopModal, anyModalOpen, confirmDialog,
 } from './ui.js';
+import { QUALITY, COLORBLIND_TEAM_COLORS } from './settings.js';
+import { initSettingsUI, persist, loadStored } from './settingsUI.js';
+import { renderHelp, openHowTo, openAbout, initHelpDialogs } from './help.js';
+import { Tutorial } from './tutorial.js';
 
 /**
  * Client game loop.
@@ -31,7 +39,10 @@ const lobbyMapImage = renderMapImage(lobbyMap);
 
 let match = null, map = null, mapImage = null, meId = null;
 let snapshots = [];
-let pending = [], seq = 0, swapQueued = false, showBoard = false;
+let pending = [], seq = 0, swapQueued = false, showBoard = false, pickQueued = 0, abilityQueued = false;
+let tutorial = null;
+const settings = loadStored();
+const $ = (s) => document.getElementById(s);
 let pred = null, corr = { x: 0, y: 0 }, meWasAlive = false;
 let particles = [], seenProjectiles = new Set(), hitFlash = new Map();
 let ping = 0, busy = false;
@@ -82,13 +93,113 @@ function drawLobbyBattle(now) {
   });
 }
 
-const input = new Input(canvas, {
-  onSwap: () => { if (match) swapQueued = true; },
-  onToggleBoard: () => { showBoard = !showBoard; },
+/* ------------------------------------------------------ input / menus */
+function onAction(id) {
+  if (id === 'menu') { if (!closeTopModal()) settingsUI.open(); return; }
+  if (id === 'mute') {
+    settings.audio.mute = !settings.audio.mute;
+    persist(settings); applySettings();
+    toast(settings.audio.mute ? 'Sound off' : 'Sound on');
+    return;
+  }
+  if (tutorial) { tutorial.action(id); return; }
+  if (!match) return;
+  if (id === 'swap') swapQueued = true;
+  else if (id === 'ability') abilityQueued = true;
+  else if (id === 'scoreboard') showBoard = !showBoard;
+  else if (/^pick[123]$/.test(id)) pickQueued = Number(id.slice(4));
+}
+const input = new Input(canvas, settings, onAction);
+const settingsUI = initSettingsUI(settings, applySettings);
+initHelpDialogs();
+initDraft((n) => { pickQueued = n; });
+
+$('bAbility').addEventListener('click', () => { abilityQueued = true; });
+$('bSwap').addEventListener('click', () => { swapQueued = true; });
+$('bBoard').addEventListener('click', () => { showBoard = !showBoard; });
+$('bLeave').addEventListener('click', async () => {
+  if (await confirmDialog('Leave this match?', 'Leave', 'Stay')) leaveMatch();
 });
-document.getElementById('bSwap').addEventListener('click', () => { swapQueued = true; });
-document.getElementById('bBoard').addEventListener('click', () => { showBoard = !showBoard; });
-document.getElementById('bLeave').addEventListener('click', () => leaveMatch());
+for (const id of ['bGear', 'tGear', 'rSettings']) $(id).addEventListener('click', () => settingsUI.open());
+const fireBtn = $('bFire');
+fireBtn.addEventListener('pointerdown', (e) => { e.preventDefault(); input.fireHeld = true; });
+for (const ev of ['pointerup', 'pointercancel', 'pointerleave']) fireBtn.addEventListener(ev, () => { input.fireHeld = false; });
+$('bTutorial').addEventListener('click', () => startTutorial());
+$('bHowTo').addEventListener('click', () => openHowTo(settings.controls.binds, input.touch));
+$('bAbout').addEventListener('click', () => openAbout());
+$('tSkip').addEventListener('click', () => endTutorial());
+$('tLobby').addEventListener('click', () => endTutorial());
+$('tQuick').addEventListener('click', () => { endTutorial(); enter('match:quick', { ...lobby.options, visibility: 'public', bots: true }); });
+$('tSwap').addEventListener('click', () => tutorial?.action('swap'));
+$('tBoard').addEventListener('click', () => tutorial?.action('scoreboard'));
+
+/** Push settings into sound, effects, HUD and touch layout. Called on load and after every change. */
+function applySettings() {
+  setVolumes(settings.audio);
+  setShakeEnabled(settings.graphics.shake);
+  document.documentElement.style.setProperty('--ui-scale', settings.gameplay.uiScale / 100);
+  $('fps').hidden = !settings.graphics.fps;
+  $('ping').hidden = !settings.graphics.ping;
+  $('bFire').hidden = !(input.touch && !settings.gameplay.autoFire);
+  renderHelp(settings.controls.binds);
+  // Touch layout: place the on-screen buttons where the player put them.
+  for (const id of ['bSwap', 'bAbility', 'bFire']) {
+    const el = $(id), l = settings.controls.layout[id];
+    if (!input.touch) { el.style.cssText = ''; continue; }
+    Object.assign(el.style, { position: 'fixed', left: `${l.x * 100}%`, top: `${l.y * 100}%`, right: 'auto', bottom: 'auto', transform: `translate(-50%,-50%) scale(${l.s})` });
+  }
+}
+
+/* ------------------------------------------------------------ tutorial */
+function startTutorial() {
+  if (match) return;
+  tutorial = new Tutorial({ settings, touch: input.touch, onFinish: endTutorial });
+  map = tutorial.map;
+  mapImage = renderMapImage(map);
+  particles = [];
+  input.reset();
+  $('tut').hidden = false;
+  $('lobby').hidden = true;
+  document.body.classList.remove('lobby-open');
+  startMusic();
+}
+
+function endTutorial() {
+  if (!tutorial) return;
+  tutorial = null;
+  input.reset();
+  $('tut').hidden = true;
+  showLobby(true);
+  stopMusic();
+}
+
+/* ------------------------------------------- loading screen / welcome */
+let everConnected = false;
+const loadCard = document.querySelector('.load-card');
+function hideLoading() {
+  $('loading').hidden = true;
+  if (!settings.seen.welcome) openModal($('welcome'));
+}
+function showOffline() {
+  if (everConnected) return;
+  loadCard.classList.add('offline');
+  $('loadMsg').textContent = 'The game server is offline or unreachable. Check your connection, or try again in a minute.';
+  $('loadRetry').hidden = false;
+  $('loadTutorial').hidden = false;
+}
+$('loadRetry').addEventListener('click', () => {
+  loadCard.classList.remove('offline');
+  $('loadMsg').textContent = 'Connecting to the game server…';
+  $('loadRetry').hidden = true;
+  socket.connect();
+});
+$('loadTutorial').addEventListener('click', () => { hideLoading(); closeModal($('welcome')); startTutorial(); });
+const offlineTimer = setTimeout(showOffline, 8000);
+// Either choice (or Esc) counts: the welcome card never shows again.
+$('welcome').addEventListener('closed', () => { settings.seen.welcome = true; persist(settings); });
+$('welStart').addEventListener('click', () => { closeModal($('welcome')); startTutorial(); });
+$('welSkip').addEventListener('click', () => closeModal($('welcome')));
+applySettings();
 
 /* ------------------------------------------------------------ network */
 function request(event, payload, timeout = 6000) {
@@ -100,6 +211,8 @@ function request(event, payload, timeout = 6000) {
 }
 
 socket.on('connect', async () => {
+  clearTimeout(offlineTimer);
+  if (!everConnected) { everConnected = true; hideLoading(); }
   setNetStatus('Online', true);
   await request('profile:set', profile);
   const res = await request('lobby:list');
@@ -110,7 +223,7 @@ socket.on('disconnect', () => {
   renderMatchList(null);
   if (match) { exitToLobby(); toast('Connection lost'); }
 });
-socket.on('connect_error', () => setNetStatus('Server offline', false));
+socket.on('connect_error', () => { setNetStatus('Server offline', false); showOffline(); });
 socket.on('lobby:update', (d) => {
   renderMatchList(d.matches);
   setNetStatus(`Online · ${d.online} connected`, true);
@@ -158,12 +271,15 @@ function enterMatch(info) {
   map = buildMap(info.map);
   mapImage = renderMapImage(map);
   snapshots = []; pending = []; particles = []; seenProjectiles = new Set(); hitFlash = new Map();
-  pred = null; corr = { x: 0, y: 0 }; meWasAlive = false; showBoard = false; swapQueued = false;
+  pred = null; corr = { x: 0, y: 0 }; meWasAlive = false; showBoard = false; swapQueued = false; pickQueued = 0; abilityQueued = false;
+  floaters.length = 0;
   input.reset();
   input.active = true;
   clearFeed();
   setMatchInfo(info);
   showLobby(false);
+  applySettings();
+  startMusic();
   addFeed(info.practice ? 'Practice started' : `Joined match ${info.code}`);
 }
 
@@ -172,6 +288,7 @@ function exitToLobby() {
   input.active = false;
   input.reset();
   showLobby(true);
+  stopMusic();
 }
 
 async function leaveMatch() {
@@ -183,6 +300,8 @@ async function leaveMatch() {
 
 /* ------------------------------------------------- prediction / sync */
 function latest() { return snapshots.length ? snapshots[snapshots.length - 1].d : null; }
+/** Same speed rule as the server: base speed times the player's Swift multiplier. */
+const mySpeed = (d) => PLAYER_SPEED * ((d && d.me && d.me.spd) || 1);
 
 function reconcile(d) {
   const me = d.pl.find((p) => p.i === meId);
@@ -190,8 +309,8 @@ function reconcile(d) {
   const shown = pred ? { x: pred.x + corr.x, y: pred.y + corr.y } : null;
   pending = pending.filter((i) => i.seq > d.ack);
   pred = { x: me.x, y: me.y };
-  const canMove = me.al && d.round.s === 'playing';
-  if (canMove) for (const i of pending) moveEntity(map, pred, i.mx, i.my, INPUT_DT, PLAYER_SPEED, PLAYER_RADIUS);
+  const canMove = me.al && !me.dn && d.round.s === 'playing';
+  if (canMove) for (const i of pending) moveEntity(map, pred, i.mx, i.my, INPUT_DT, mySpeed(d), PLAYER_RADIUS);
   else pending = [];
   // Hide small corrections by blending them out over a few frames.
   if (shown && meWasAlive && me.al) {
@@ -206,15 +325,15 @@ function sendInputs(dt) {
   inputAcc = Math.min(inputAcc + dt, 0.25);
   const d = latest();
   const me = d && d.pl.find((p) => p.i === meId);
-  const canMove = me && me.al && d.round.s === 'playing';
+  const canMove = me && me.al && !me.dn && d.round.s === 'playing';
   while (inputAcc >= INPUT_DT) {
     inputAcc -= INPUT_DT;
     const s = input.sample(view.scale);
-    const pkt = { seq: ++seq, mx: s.mx, my: s.my, aim: s.aim, fire: s.fire, aimDist: s.aimDist, swap: swapQueued };
-    swapQueued = false;
+    const pkt = { seq: ++seq, mx: s.mx, my: s.my, aim: s.aim, fire: s.fire, aimDist: s.aimDist, swap: swapQueued, pick: pickQueued, ability: abilityQueued };
+    swapQueued = false; pickQueued = 0; abilityQueued = false;
     socket.emit('input', pkt);
     if (canMove && pred) {
-      moveEntity(map, pred, pkt.mx, pkt.my, INPUT_DT, PLAYER_SPEED, PLAYER_RADIUS);
+      moveEntity(map, pred, pkt.mx, pkt.my, INPUT_DT, mySpeed(d), PLAYER_RADIUS);
       pending.push(pkt);
       if (pending.length > MAX_PENDING) pending.shift();
     }
@@ -240,30 +359,55 @@ function interpolatedPlayers(now) {
 }
 
 /* ------------------------------------------------------------- events */
+/** Particle budget from the Graphics → Quality setting. */
+const fxCount = (n) => Math.max(1, Math.round(n * QUALITY[settings.graphics.quality]));
+
 function burst(x, y, r) {
-  for (let i = 0; i < 22; i++) {
+  for (let i = 0, n = fxCount(22); i < n; i++) {
     const a = Math.random() * 7, s = 60 + Math.random() * 260;
     particles.push({ x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life: 0.5, max: 0.5, r: 6 + Math.random() * 10, col: ['#ffb347', '#ff6a2b', '#ffe27a', '#555'][i % 4] });
   }
   particles.push({ x, y, vx: 0, vy: 0, life: 0.3, max: 0.3, r, ring: true });
 }
 
+/** Distance from my fighter, for scaling shake by how close something happened. */
+function distToMe(x, y) {
+  const me = latest()?.pl.find((p) => p.i === meId);
+  return me ? Math.hypot(me.x - x, me.y - y) : Infinity;
+}
+
 function handleEvent(e) {
   if (!match || !e) return;
   switch (e.type) {
-    case 'explosion': burst(e.x, e.y, e.r); break;
+    case 'explosion': {
+      burst(e.x, e.y, e.r);
+      const d = distToMe(e.x, e.y);
+      if (d < 700) { shake(0.6 * (1 - d / 700) + 0.1); sfx.boom(); }
+      break;
+    }
     case 'hit':
       hitFlash.set(e.targetId, performance.now());
-      if (e.attackerId === meId && e.targetId !== meId) flashHitmarker();
+      if (e.x !== undefined) addFloater(e.x, e.y, e.blocked ? 'blocked' : String(e.dmg), e.targetId === meId ? '#ff5a4e' : '#fff');
+      if (e.attackerId === meId && e.targetId !== meId) { flashHitmarker(); sfx.hit(); }
+      if (e.targetId === meId && e.attackerId !== meId && !e.blocked) { hurtFlash(); sfx.hurt(); shake(0.2); }
       break;
     case 'kill':
       addFeed(e.self ? `${e.victimName} blew themselves up` : `${e.killerName} ▸ ${e.victimName}`);
-      if (e.killerId === meId && !e.self) toast(`You eliminated ${e.victimName}`);
+      if (e.killerId === meId && !e.self) { killConfirm(`✕ ${e.victimName}  +XP`); sfx.kill(); }
       break;
-    case 'pickup': if (e.playerId === meId) toast('Picked up a weapon · Q / Swap to switch'); break;
+    case 'downed': addFeed(`${e.victimName} is down`); break;
+    case 'revived': addFeed(`${e.byName} revived ${e.name}`); if (e.playerId === meId) toast('Revived!'); break;
+    case 'levelUp': if (e.playerId === meId) { sfx.level(); toast(`Level ${e.level}! Pick a skill (1/2/3)`); } break;
+    case 'skill': break;
+    case 'ability': if (e.playerId === meId) sfx.ability(); break;
+    case 'crate': burst(e.x, e.y, 30); break;
+    case 'loot': if (e.playerId === meId) { sfx.pickup(); toast({ weapon: 'Weapon', orb: 'XP orb', health: '+Health', armor: '+Armor' }[e.kind] || 'Loot'); } break;
+    case 'waveStart': addFeed(`Wave ${e.number} · ${e.bots} bots`); toast(`Wave ${e.number}`); break;
+    case 'waveClear': addFeed(`Wave ${e.number} cleared`); break;
+    case 'pickup': if (e.playerId === meId) { sfx.pickup(); toast('Picked up a weapon · Q / Swap to switch'); } break;
     case 'join': if (e.id !== meId) addFeed(`${e.name} joined`); break;
     case 'leave': addFeed(`${e.name} left`); break;
-    case 'roundEnd': addFeed(`Round over · ${e.winner}`); break;
+    case 'roundEnd': addFeed(`Round over · ${e.winner}`); if (e.waves !== undefined) recordWaves(e.waves); break;
     case 'roundStart': addFeed(`Round ${e.number} · go!`); pending = []; break;
     default: break;
   }
@@ -279,11 +423,30 @@ function resize() {
 addEventListener('resize', resize);
 resize();
 
-let last = performance.now(), hudAt = 0;
+let last = performance.now(), hudAt = 0, fpsFrames = 0, fpsAt = 0;
+/** Display options shared by the match and tutorial scenes. */
+const displayOptions = () => ({
+  teamColors: settings.gameplay.colorblind ? COLORBLIND_TEAM_COLORS : TEAM_COLORS,
+  hideNames: settings.gameplay.hideNames,
+  stickLayout: settings.controls.joystick === 'fixed' ? settings.controls.layout : null,
+  sticks: input.sticks, touch: input.touch,
+});
+
 function frame(now) {
   requestAnimationFrame(frame);
   const dt = Math.min(0.05, (now - last) / 1000);
   last = now;
+  // Menus pause only my own input; the match keeps running for everyone else.
+  input.active = (!!match || !!tutorial) && !anyModalOpen();
+  fpsFrames++;
+  if (now - fpsAt > 500) { $('fps').textContent = `${Math.round((fpsFrames * 1000) / (now - fpsAt))} FPS`; fpsFrames = 0; fpsAt = now; }
+
+  if (tutorial) {
+    tutorial.update(dt, input.sample(view.scale));
+    drawFrame(ctx, view, { ...tutorial.scene(now), mapImage, ...displayOptions() });
+    if (now - hudAt > 100) { hudAt = now; tutorial.renderCard(document.querySelector('#tut')); }
+    return;
+  }
   if (!match) {
     drawLobbyBattle(now);
     lobby.drawPreview(now);
@@ -317,7 +480,9 @@ function frame(now) {
     if (p.k !== 'g' && isSolidPoint(map, x, y)) continue;
     if (!seenProjectiles.has(p.i)) {
       seenProjectiles.add(p.i);
-      particles.push({ x: p.x, y: p.y, vx: 0, vy: 0, life: 0.06, max: 0.06, r: p.k === 'r' ? 12 : 7, col: '#ffe27a' });
+      const mine = p.o === meId;
+      if (settings.graphics.quality !== 'low' || mine) particles.push({ x: p.x, y: p.y, vx: 0, vy: 0, life: mine ? 0.08 : 0.06, max: 0.08, r: p.k === 'r' ? 14 : mine ? 11 : 7, col: '#ffe27a' });
+      if (mine && p.k !== 'g') { sfx.shoot(); shake(p.k === 'r' ? 0.3 : 0.04); }
     }
     projectiles.push({ ...p, x, y });
   }
@@ -326,15 +491,18 @@ function frame(now) {
   for (const p of particles) { p.x += p.vx * dt; p.y += p.vy * dt; p.vx *= 0.9; p.vy *= 0.9; p.life -= dt; }
   particles = particles.filter((p) => p.life > 0);
 
+  updateFloaters(dt);
   const pickups = map.pickups.map((p, i) => ({ ...p, available: d.pk[i] === '1' }));
+  const crates = map.crates.map((c, i) => ({ ...c, alive: d.cr && d.cr[i] === '1' }));
   drawFrame(ctx, view, {
     map, mapImage, camera, players, projectiles, pickups, particles, now,
-    teams: match.mode === 'tdm', meId, sticks: input.sticks, touch: input.touch,
+    crates, loot: d.lo || [], turrets: d.tu || [], floaters, shake: shakeOffset(dt),
+    teams: match.mode !== 'dm', meId, ...displayOptions(),
   });
 
   if (now - hudAt > 100) {
     hudAt = now;
-    updateHud({ snap: d, me: meSnap, meId, match, showBoard, ping });
+    updateHud({ snap: d, me: meSnap, meId, match, showBoard, ping, priv: d.me });
     pruneFeed();
   }
 }

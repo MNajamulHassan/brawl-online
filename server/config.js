@@ -9,5 +9,7 @@ export const config = Object.freeze({
   maxRooms: int(process.env.MAX_ROOMS, 200),
   maxConnections: int(process.env.MAX_CONNECTIONS, 1000),
   // Comma-separated list of origins allowed to connect from another domain (e.g. the Netlify client).
+  // Bearer token for GET /api/balance. Empty = endpoint disabled.
+  adminToken: process.env.ADMIN_TOKEN || '',
   corsOrigin: process.env.CORS_ORIGIN ? process.env.CORS_ORIGIN.split(',').map((o) => o.trim()).filter(Boolean) : false,
 });

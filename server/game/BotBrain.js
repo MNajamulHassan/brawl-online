@@ -4,10 +4,11 @@ import { hasLineOfSight, findPath, angleDiff } from '../../shared/physics.js';
 const SIGHT_RANGE = 620;
 const REACTION_TIME = 0.4; // seconds a bot must see a target before shooting
 const REPATH_INTERVAL = 0.7;
+const ABILITY_AFTER = 1; // seconds in a fight before a bot uses its active skill
 
 /**
  * Simple server-side AI. Produces the same kind of intent a human input does
- * ({ mx, my, aim, fire, aimDist }), so bots go through the same rules as players.
+ * ({ mx, my, aim, fire, aimDist, ability }), so bots go through the same rules as players.
  */
 export class BotBrain {
   constructor(rng = Math.random) {
@@ -23,7 +24,7 @@ export class BotBrain {
   think(bot, room, dt) {
     const map = room.map;
     const target = room.nearestEnemy(bot);
-    const intent = { mx: 0, my: 0, aim: bot.angle, fire: false, aimDist: 300 };
+    const intent = { mx: 0, my: 0, aim: bot.angle, fire: false, aimDist: 300, ability: false };
 
     this.repathIn -= dt;
     this.strafeIn -= dt;
@@ -43,12 +44,19 @@ export class BotBrain {
       intent.my = uy * approach + ux * this.strafeDir * 0.8;
       intent.aimDist = dist;
       intent.fire = this.seenFor > REACTION_TIME && Math.abs(diff) < 0.25;
+      intent.ability = this.seenFor > ABILITY_AFTER; // Room ignores it while on cooldown
       return intent;
     }
 
     this.seenFor = 0;
     let goal = target;
-    if (!bot.special) {
+    const downed = room.downedTeammate(bot, 500);
+    if (downed) {
+      // Stand next to a downed teammate until they are back up.
+      if (Math.hypot(downed.x - bot.x, downed.y - bot.y) < 30) return intent;
+      goal = downed;
+    }
+    if (!bot.special && !downed) {
       const pickup = room.nearestAvailablePickup(bot, 420);
       if (pickup) goal = pickup;
     }

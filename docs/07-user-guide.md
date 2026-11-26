@@ -22,8 +22,28 @@ On phones, turn the screen sideways for the best view.
 | Shoot | Hold left click | Push right thumb past the inner red ring |
 | Throw distance (grenades) | Distance of the cursor from you | How far you push the right thumb |
 | Swap weapon | Q or mouse wheel | **Swap** button |
+| Use active skill | E | Skill button (right side) |
+| Pick a skill card | 1 / 2 / 3 | Tap the card |
+| Sound on/off | M | – |
 | Scoreboard | Tab | **Scores** button |
 | Leave | **Leave** button | **Leave** button |
+
+All keys above are defaults. Change them in **Settings → Controls** (⚙ button or Esc): click a key, press the new one. Each action has a primary and an alternate key. If the key is already used, you can swap the two. On touch screens, **Edit touch layout** lets you drag and resize the sticks and buttons, and you can choose fixed or floating sticks.
+
+## Settings
+
+| Tab | Options |
+|---|---|
+| Audio | Master, effects and music volume; mute |
+| Graphics | Quality (fewer particles on Low), screen shake, FPS counter, ping, fullscreen |
+| Controls | Keybinds (primary + alternate), fixed/floating joysticks, touch layout editor |
+| Gameplay | Touch aim sensitivity, auto-fire on the aim stick (off = Fire button), hide name tags, colour-blind team colours, UI scale |
+
+Every tab has **Reset to defaults**. Settings are saved in your browser. Opening settings during a match pauses only *your* controls; the match keeps going.
+
+## Tutorial
+
+On your first visit the game offers a 1-minute tutorial; you can replay it anytime with the **Tutorial** button in the lobby. It runs offline against target dummies: move, shoot, pick up a weapon, swap, throw a grenade and open the scoreboard. **Skip** is always available. If the server is offline, the loading screen offers the tutorial too.
 
 ## Weapons
 
@@ -40,7 +60,20 @@ Weapons appear as glowing circles on the map. Walk over one to pick it up. A das
 ## Modes
 
 - **Deathmatch**: everyone for themselves. First to 15 eliminations wins.
-- **Team deathmatch**: Red vs Blue, no friendly fire. First team to 30 wins.
+- **Team deathmatch**: Red vs Blue, no friendly fire. First team to 30 wins. Friends who join with your match code are put on your team. When you are hit hard enough you are **downed** for 8 s: a teammate who stands next to you for 3 s brings you back at half health.
+- **Bot waves** (co-op): everyone on one team against waves of bots that get tougher every wave. If you fall, you return when the next wave starts. The run ends when the whole team is down. Your best score shows in the lobby.
+
+## Levels and skills
+
+You earn XP for damage, kills, assists, crates and purple XP orbs. Each level-up shows three skill cards; pick one with 1/2/3 or by tapping (after 5 s one is picked for you). Skills stack and stay with you when you die, but reset every round.
+
+- **Passives**: Swift (speed), Tough (max HP), Life steal, Hair trigger (fire rate), Big mags (more ammo from pickups), Regen.
+- **Weapon mods**: Ricochet (bullets bounce), Piercing (bullets go through), Finale (every 8th shot explodes), Buckshot (more shotgun pellets).
+- **Actives** (press E): Dash, Shield bubble, Patch up (heal), Turret, Blink. You hold one active at a time.
+
+## Crates
+
+Wooden crates stand around both maps. Shoot them to drop a weapon, an XP orb, a health pack or armour (blue bar under your health; it takes damage first). Crates come back after 20 s.
 
 Rounds last up to 5 minutes. Scores show for 8 seconds, then a new round starts.
 

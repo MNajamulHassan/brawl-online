@@ -43,7 +43,8 @@ export function parseCreateOptions(raw) {
 /**
  * Player input packet.
  *   seq: increasing integer   mx,my: move vector (-1..1)   aim: radians
- *   aimDist: px (grenade throw distance)   fire, swap: booleans
+ *   aimDist: px (grenade throw distance)   fire, swap, ability: booleans
+ *   pick: 1..3 chooses a card from the skill draft (0 = no pick)
  */
 export function parseInput(raw, lastSeq = 0) {
   if (!isObj(raw)) return null;
@@ -62,5 +63,7 @@ export function parseInput(raw, lastSeq = 0) {
     aimDist: finite(aimDist) ? Math.max(0, Math.min(400, aimDist)) : 300,
     fire: raw.fire === true,
     swap: raw.swap === true,
+    ability: raw.ability === true,
+    pick: Number.isInteger(raw.pick) && raw.pick >= 1 && raw.pick <= 3 ? raw.pick : 0,
   };
 }

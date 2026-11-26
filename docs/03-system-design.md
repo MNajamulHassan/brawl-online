@@ -37,12 +37,12 @@ flowchart LR
 
 | Layer | Files | Responsibility |
 |---|---|---|
-| Presentation | `public/js/ui.js`, `renderer.js`, `css/style.css` | DOM and canvas drawing only, no rules |
-| Client logic | `public/js/main.js`, `input.js` | Input sampling, prediction, reconciliation, interpolation |
+| Presentation | `public/js/ui.js`, `renderer.js`, `fx.js`, `settingsUI.js`, `help.js`, `css/style.css` | DOM and canvas drawing, dialogs, settings menu, help text, sounds and music; no rules |
+| Client logic | `public/js/main.js`, `input.js`, `settings.js`, `tutorial.js` | Input sampling via keybinds, prediction, reconciliation, interpolation, player settings (pure, unit-tested), local tutorial simulation |
 | Transport | `server/net/socketHandlers.js` | Socket events, validation, rate limits, broadcasting |
-| Domain | `server/game/Room.js`, `RoomManager.js`, `BotBrain.js` | All game rules |
-| Shared kernel | `shared/*.js` | Constants, maps and physics used by both sides |
-| Infrastructure | `server/index.js`, `config.js`, `logger.js` | Boot, game loop, config, logging, shutdown |
+| Domain | `server/game/Room.js`, `RoomManager.js`, `BotBrain.js`, `Skills.js`, `WaveDirector.js`, `BalanceStats.js` | All game rules, skill maths, the Bot waves director, balance statistics |
+| Shared kernel | `shared/*.js` | Constants, maps, physics and `balance.js` (every tunable number) used by both sides |
+| Infrastructure | `server/index.js`, `config.js`, `logger.js`, `adminAuth.js` | Boot, game loop, config, logging, admin auth, shutdown |
 
 `Room` has no knowledge of sockets. It reports what happened through an `onEvent` callback, which makes it fully unit-testable with a fake clock and seeded random numbers.
 
@@ -73,13 +73,47 @@ every ~16 ms:
 
 ### 3.2 Room tick order
 
-1. Update round state (timer, end-of-round, restart)
+1. Update round state (timer, end-of-round, restart); in Bot waves, advance the `WaveDirector`
 2. For each player:
-   - bots: `BotBrain.think()` → move/aim/fire intent
-   - humans: apply up to 3 queued inputs (each = 1/30 s of movement)
-   - fire if the trigger is held and the weapon cooldown has passed
-3. Move projectiles in sub-steps of at most 12 px (no tunnelling through walls), apply hits and explosions
-4. Respawn eliminated players whose timer has elapsed; check weapon pickups
+   - bots: `BotBrain.think()` → move/aim/fire/ability intent; bots pick skill cards at once
+   - humans: apply up to 3 queued inputs (each = 1/30 s of movement, plus skill pick and ability)
+   - auto-pick a skill card when the 5 s draft timer expires
+   - fire if the trigger is held and the weapon cooldown has passed (shortened by Hair trigger)
+   - Regen healing
+3. Turrets aim and fire
+4. Move projectiles in sub-steps of at most 12 px (no tunnelling through walls); bounce (Ricochet), pierce, hit crates, apply hits and explosions
+5. Downed players: revive progress or bleed-out
+6. Remove dead wave bots; respawn eliminated players whose timer has elapsed; check weapon pickups and loot
+7. Respawn crates, expire loot; in Bot waves, end the run if no human is standing
+
+### 3.2.1 Damage pipeline
+
+`damage(target, amount, attacker, weapon)` is the single entry point for all damage:
+shield blocks everything → armour absorbs first → HP. The attacker (if an enemy) gets XP for the damage dealt and Life steal healing, the
+target remembers the attacker for assists, and `BalanceStats` records the damage. At 0 HP the target is **downed** in modes with revives
+(`MODES[mode].revives`), otherwise **killed**. `kill()` awards kill XP, assist XP and team points, and records the kill.
+
+### 3.2.2 Skill draft
+
+```
+gainXp ──► level up? ──► drafts++ ──► nextOffer(): 3 skills not maxed ──► offer + 5 s deadline
+                                                                         │
+input.pick (1-3) / deadline / bot ──► pickSkill(): applySkill, drafts-- ─┘ (next queued draft)
+```
+Skill effects are pure functions of the player's stack counts (`Skills.js`: `maxHp`, `speedMul`, `fireRateMul`, `boomEvery`, `activeCooldown`),
+so the server and tests can compute them without side effects. The client gets the movement multiplier (`me.spd`) so prediction uses the same speed as the server.
+
+### 3.2.3 Bot waves
+
+`WaveDirector` alternates `break` (5 s) and `fighting`. On a new wave it respawns eliminated humans and queues `3 + 2(n-1)` bots,
+spawning one every 0.7 s while fewer than 12 are alive. Wave bots get `hpMul` and `dmgMul`, die without being downed, and are removed
+from the room. When none are left the wave is cleared. Score = `survived` (waves fully cleared).
+
+### 3.2.4 Balance statistics
+
+One `BalanceStats` instance is owned by `RoomManager` and passed to every room. It is in memory only; `index.js` logs `summary()`
+every 5 minutes. `GET /api/balance` returns it with the full `balance.js` config when the request carries the `ADMIN_TOKEN` bearer token
+(compared in constant time by `adminAuth.js`).
 
 ### 3.3 Prediction and reconciliation
 
@@ -123,17 +157,25 @@ Because client and server run the same `moveEntity()` from `shared/physics.js` w
 | hp, alive | number, bool | |
 | weapon, special, ammo | string, string?, int | `weapon` is what is in hand |
 | kills, deaths | int | Reset each round |
+| armor, maxHp() | number | Armour absorbs damage first; max HP grows with Tough (and `hpMul` for wave bots) |
+| level, xp, drafts, offer, offerDeadline | int, number, int, string[]?, ms | Progression; reset each round |
+| skills, active, activeReadyAt, shieldUntil | {id: stacks}, string?, ms, ms | Skills; kept through deaths |
+| downed, downedUntil, downedBy, reviveMs | bool, ms, object, ms | Revive state |
+| damagedBy, roundDamage | Map, {weapon: dmg} | For assists and per-weapon win rate |
 | inputs, lastSeq | array, int | Input queue and last applied sequence number |
 
 ### Projectile
-`{ id, kind: bullet|rocket|grenade, x, y, vx, vy, ownerId, team, weapon, damage, life, radius?, fuse?, moveLeft? }`
+`{ id, kind: bullet|rocket|grenade, x, y, vx, vy, ownerId, team, weapon, damage, life, radius?, fuse?, moveLeft?, bounces?, pierce?, hitIds?, boom?, blastDmg? }`
+
+### Crate, loot, turret
+`Crate { x, y, hp, respawnAt }` · `Loot { id, kind: weapon|orb|health|armor, weapon?, x, y, expiresAt }` · `Turret { id, ownerId, team, x, y, angle, until, nextShot }`
 
 ### Room
-`{ code, mode, mapKey, visibility, botsEnabled, players: Map, projectiles[], pickups[], teamScores, round: { number, state: playing|ended, endsAt, stateEndsAt, winner } }`
+`{ code, mode, mapKey, visibility, botsEnabled, hostId, players: Map, projectiles[], pickups[], crates[], loot[], turrets[], teamScores, waves?: WaveDirector, stats: BalanceStats, round: { number, state: playing|ended, endsAt, stateEndsAt, winner } }`
 
 ## 5. Map format
 
-Maps are 32 × 22 tiles of 48 px. Each map is authored as its left 16 columns and mirrored. Legend: `.` floor, `#` hedge, `o` rock, `B` building, `c` car, `A`/`H`/`R`/`G` weapon spawns. The border is forced solid.
+Maps are 32 × 22 tiles of 48 px. Each map is authored as its left 16 columns and mirrored. Legend: `.` floor, `#` hedge, `o` rock, `B` building, `c` car, `A`/`H`/`R`/`G` weapon spawns, `X` loot crate spawns (not solid for movement, but they stop bullets). The border is forced solid.
 
 ## 6. Security headers
 

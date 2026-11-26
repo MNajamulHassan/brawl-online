@@ -1,4 +1,6 @@
-import { TILE, MAP_W, MAP_H, PLAYER_RADIUS, WEAPONS, TEAM_COLORS } from '/shared/constants.js';
+import { TILE, MAP_W, MAP_H, PLAYER_RADIUS, CRATE_RADIUS, WEAPONS, TEAM_COLORS } from '/shared/constants.js';
+
+const LOOT_STYLE = { w: ['#ff9a3c', 'GUN'], o: ['#9b6bff', 'XP'], h: ['#3ad19a', '+'], a: ['#4ea3ff', 'AR'] };
 
 /** All canvas drawing. Pure presentation: reads state, never changes it. */
 
@@ -99,7 +101,7 @@ export function drawCharacter(c, x, y, angle, color, hat, weapon, opts = {}) {
   if (opts.ring) { c.strokeStyle = opts.ring; c.lineWidth = 4; c.beginPath(); c.arc(0, 0, 22, 0, 7); c.stroke(); }
   c.rotate(angle);
   const len = (WEAPONS[weapon] || WEAPONS.pistol).len;
-  if (weapon === 'nade') { c.fillStyle = '#4f8a36'; c.beginPath(); c.arc(17, 7, 6, 0, 7); c.fill(); }
+  if (!weapon) { /* unarmed (tutorial dummies) */ } else if (weapon === 'nade') { c.fillStyle = '#4f8a36'; c.beginPath(); c.arc(17, 7, 6, 0, 7); c.fill(); }
   else {
     const rpg = weapon === 'rpg';
     c.fillStyle = rpg ? '#3d4a36' : '#1f2224'; c.fillRect(10, rpg ? 1 : 3, len, rpg ? 10 : 6);
@@ -125,11 +127,14 @@ export function drawCharacter(c, x, y, angle, color, hat, weapon, opts = {}) {
 export function drawFrame(ctx, view, scene) {
   const { width: W, height: H, dpr, scale } = view;
   const { map, mapImage, camera, players, projectiles, pickups, particles, teams, meId, sticks, touch, now } = scene;
+  const { crates = [], loot = [], turrets = [], floaters = [], shake = { x: 0, y: 0 } } = scene;
+  const { teamColors = TEAM_COLORS, hideNames = false, stickLayout = null } = scene;
 
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.fillStyle = map.key === 'field' ? '#1d3415' : '#1c1e22';
   ctx.fillRect(0, 0, W, H);
-  ctx.setTransform(dpr * scale, 0, 0, dpr * scale, dpr * (W / 2 - camera.x * scale), dpr * (H / 2 - camera.y * scale));
+  const camX = camera.x + shake.x, camY = camera.y + shake.y;
+  ctx.setTransform(dpr * scale, 0, 0, dpr * scale, dpr * (W / 2 - camX * scale), dpr * (H / 2 - camY * scale));
   ctx.drawImage(mapImage, 0, 0);
 
   pickups.forEach((p, i) => {
@@ -145,6 +150,33 @@ export function drawFrame(ctx, view, scene) {
       ctx.beginPath(); ctx.arc(p.x, p.y, 14, 0, 7); ctx.stroke(); ctx.setLineDash([]);
     }
   });
+
+  for (const c of crates) {
+    if (!c.alive) continue;
+    const s = CRATE_RADIUS;
+    ctx.fillStyle = 'rgba(0,0,0,.3)'; ctx.fillRect(c.x - s + 4, c.y - s + 5, s * 2, s * 2);
+    ctx.fillStyle = '#a8743a'; ctx.fillRect(c.x - s, c.y - s, s * 2, s * 2);
+    ctx.strokeStyle = '#5e3c17'; ctx.lineWidth = 3; ctx.strokeRect(c.x - s + 1.5, c.y - s + 1.5, s * 2 - 3, s * 2 - 3);
+    ctx.beginPath(); ctx.moveTo(c.x - s, c.y - s); ctx.lineTo(c.x + s, c.y + s); ctx.moveTo(c.x + s, c.y - s); ctx.lineTo(c.x - s, c.y + s); ctx.stroke();
+  }
+
+  for (const l of loot) {
+    const [col, label] = LOOT_STYLE[l.k] || LOOT_STYLE.o;
+    const bob = Math.sin(now / 200 + l.i) * 2;
+    ctx.fillStyle = col + '44'; ctx.beginPath(); ctx.arc(l.x, l.y + bob, 15, 0, 7); ctx.fill();
+    ctx.fillStyle = col; ctx.beginPath(); ctx.arc(l.x, l.y + bob, 10, 0, 7); ctx.fill();
+    ctx.fillStyle = '#0b100d'; ctx.font = '700 9px Rubik,sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(l.w ? WEAPONS[l.w]?.tag || label : label, l.x, l.y + bob + 1);
+  }
+
+  for (const tu of turrets) {
+    ctx.save(); ctx.translate(tu.x, tu.y);
+    ctx.fillStyle = 'rgba(0,0,0,.3)'; ctx.beginPath(); ctx.arc(3, 4, 13, 0, 7); ctx.fill();
+    ctx.fillStyle = teams ? teamColors[tu.t] : '#9aa39d'; ctx.beginPath(); ctx.arc(0, 0, 12, 0, 7); ctx.fill();
+    ctx.rotate(tu.a); ctx.fillStyle = '#1f2224'; ctx.fillRect(2, -3, 16, 6);
+    ctx.fillStyle = '#555c60'; ctx.beginPath(); ctx.arc(0, 0, 7, 0, 7); ctx.fill();
+    ctx.restore();
+  }
 
   for (const p of projectiles) {
     if (p.k === 'b') {
@@ -164,14 +196,32 @@ export function drawFrame(ctx, view, scene) {
 
   for (const p of players) {
     if (!p.al) continue;
-    drawCharacter(ctx, p.x, p.y, p.a, p.c, p.h, p.w, { ring: teams ? TEAM_COLORS[p.t] : null, flash: p.flash });
+    if (p.dn) {
+      // Downed: faded fighter with a ring that fills while a teammate revives them.
+      ctx.globalAlpha = 0.5;
+      drawCharacter(ctx, p.x, p.y, p.a, '#8a8f99', p.h, p.w, {});
+      ctx.globalAlpha = 1;
+      ctx.strokeStyle = 'rgba(255,255,255,.25)'; ctx.lineWidth = 4; ctx.beginPath(); ctx.arc(p.x, p.y, 26, 0, 7); ctx.stroke();
+      ctx.strokeStyle = '#3ad19a'; ctx.beginPath(); ctx.arc(p.x, p.y, 26, -Math.PI / 2, -Math.PI / 2 + (Math.PI * 2 * p.rv) / 100); ctx.stroke();
+      ctx.fillStyle = '#ff5a4e'; ctx.font = '700 11px Rubik,sans-serif'; ctx.textAlign = 'center';
+      ctx.fillText(`DOWN ${Math.ceil(p.dl / 1000)}`, p.x, p.y + 42);
+    } else drawCharacter(ctx, p.x, p.y, p.a, p.c, p.h, p.w, { ring: teams ? teamColors[p.t] : null, flash: p.flash });
+    if (p.sh) {
+      ctx.fillStyle = 'rgba(78,163,255,.18)'; ctx.strokeStyle = 'rgba(140,200,255,.8)'; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(p.x, p.y, 28, 0, 7); ctx.fill(); ctx.stroke();
+    }
     if (p.i === meId) continue;
+    const label = p.lv ? `${p.n} · ${p.lv}` : p.n;
     ctx.font = '600 12px Rubik,sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
-    ctx.fillStyle = 'rgba(0,0,0,.55)'; ctx.fillText(p.n, p.x + 1, p.y - 29);
-    ctx.fillStyle = teams ? TEAM_COLORS[p.t] || '#fff' : '#fff'; ctx.fillText(p.n, p.x, p.y - 30);
-    if (p.hp < 100) {
+    if (!hideNames) {
+      ctx.fillStyle = 'rgba(0,0,0,.55)'; ctx.fillText(label, p.x + 1, p.y - 29);
+      ctx.fillStyle = teams ? teamColors[p.t] || '#fff' : '#fff'; ctx.fillText(label, p.x, p.y - 30);
+    }
+    const mh = p.mh || 100;
+    if (p.hp < mh || p.ar) {
       ctx.fillStyle = 'rgba(0,0,0,.6)'; ctx.fillRect(p.x - 18, p.y - 26, 36, 5);
-      ctx.fillStyle = p.hp > 50 ? '#c6f432' : p.hp > 25 ? '#ffc23a' : '#ff5a4e'; ctx.fillRect(p.x - 18, p.y - 26, (36 * p.hp) / 100, 5);
+      ctx.fillStyle = p.hp > mh / 2 ? '#c6f432' : p.hp > mh / 4 ? '#ffc23a' : '#ff5a4e'; ctx.fillRect(p.x - 18, p.y - 26, (36 * p.hp) / mh, 5);
+      if (p.ar) { ctx.fillStyle = '#4ea3ff'; ctx.fillRect(p.x - 18, p.y - 21, (36 * Math.min(100, p.ar)) / 100, 2); }
     }
   }
 
@@ -186,10 +236,39 @@ export function drawFrame(ctx, view, scene) {
     }
   }
 
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  for (const f of floaters) {
+    ctx.globalAlpha = Math.min(1, f.life * 2);
+    ctx.font = '700 15px Rubik,sans-serif';
+    ctx.fillStyle = 'rgba(0,0,0,.6)'; ctx.fillText(f.text, f.x + 1, f.y + 1);
+    ctx.fillStyle = f.color; ctx.fillText(f.text, f.x, f.y);
+  }
+  ctx.globalAlpha = 1;
+
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  // Arrows at the screen edge pointing at teammates who are off screen.
+  const me = players.find((p) => p.i === meId);
+  if (teams && me) {
+    for (const p of players) {
+      if (p === me || !p.al || p.t !== me.t) continue;
+      const sx = W / 2 + (p.x - camX) * scale, sy = H / 2 + (p.y - camY) * scale;
+      if (sx > 0 && sy > 0 && sx < W && sy < H) continue;
+      const a = Math.atan2(sy - H / 2, sx - W / 2);
+      const k = Math.min((W / 2 - 28) / Math.abs(Math.cos(a) || 1e-6), (H / 2 - 28) / Math.abs(Math.sin(a) || 1e-6));
+      ctx.save(); ctx.translate(W / 2 + Math.cos(a) * k, H / 2 + Math.sin(a) * k); ctx.rotate(a);
+      ctx.fillStyle = p.dn ? '#ff5a4e' : teamColors[p.t];
+      ctx.beginPath(); ctx.moveTo(14, 0); ctx.lineTo(-8, -10); ctx.lineTo(-8, 10); ctx.closePath(); ctx.fill();
+      ctx.restore();
+    }
+  }
   if (touch) {
     for (const [key, s] of Object.entries(sticks)) {
-      if (!s) continue;
+      if (!s) {
+        // Fixed joysticks: show where they live even when untouched.
+        const l = stickLayout && stickLayout[key];
+        if (l) { ctx.strokeStyle = 'rgba(255,255,255,.18)'; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(l.x * W, l.y * H, 60 * l.s, 0, 7); ctx.stroke(); }
+        continue;
+      }
       const R = s.radius, m = Math.min(1, Math.hypot(s.dx, s.dy) / R), a = Math.atan2(s.dy, s.dx);
       ctx.strokeStyle = 'rgba(255,255,255,.35)'; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(s.ox, s.oy, R, 0, 7); ctx.stroke();
       if (key === 'aim') { ctx.strokeStyle = 'rgba(255,90,78,.5)'; ctx.beginPath(); ctx.arc(s.ox, s.oy, R * 0.6, 0, 7); ctx.stroke(); }
